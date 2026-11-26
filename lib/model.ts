@@ -1,40 +1,119 @@
 // Driftline model: deterministic scoring and actionable farming plans from one sealed snapshot.
 
-export interface SnapshotProtocol { slug:string; name:string; category:string|null; chains:string[]; tvl_usd:number; change_7d:number|null; mcap_usd:number|null; listed_at:string|null; gecko_id:string|null; symbol:string|null }
-export interface Snapshot { as_of:string; source:string; floor_usd:number; protocols:SnapshotProtocol[]; watchlist:string[] }
-export interface ModelConstants { high_tvl_multiple:number; mid_tvl_multiple:number; low_tvl_multiple:number; momentum_floor:number; momentum_cap:number; momentum_weight:number; age_days:number; age_floor:number; age_range:number; unknown_age_days:number }
-export const MODEL: ModelConstants = { high_tvl_multiple:0.25, mid_tvl_multiple:0.35, low_tvl_multiple:0.5, momentum_floor:-60, momentum_cap:150, momentum_weight:0.4, age_days:1095, age_floor:0.7, age_range:0.5, unknown_age_days:365 };
+export interface SnapshotProtocol {
+  slug: string;
+  name: string;
+  category: string | null;
+  chains: string[];
+  tvl_usd: number;
+  change_7d: number | null;
+  mcap_usd: number | null;
+  listed_at: string | null;
+  gecko_id: string | null;
+  symbol: string | null;
+}
+export interface Snapshot {
+  as_of: string;
+  source: string;
+  floor_usd: number;
+  protocols: SnapshotProtocol[];
+  watchlist: string[];
+}
+export interface ModelConstants {
+  high_tvl_multiple: number;
+  mid_tvl_multiple: number;
+  low_tvl_multiple: number;
+  momentum_floor: number;
+  momentum_cap: number;
+  momentum_weight: number;
+  age_days: number;
+  age_floor: number;
+  age_range: number;
+  unknown_age_days: number;
+}
+export const MODEL: ModelConstants = {
+  high_tvl_multiple: 0.25,
+  mid_tvl_multiple: 0.35,
+  low_tvl_multiple: 0.5,
+  momentum_floor: -60,
+  momentum_cap: 150,
+  momentum_weight: 0.4,
+  age_days: 1095,
+  age_floor: 0.7,
+  age_range: 0.5,
+  unknown_age_days: 365,
+};
 export const MODEL_VERSION = 'driftline-1';
 export const LIVE_ROWS = 24;
 
 export interface BoardRow {
-  rank:number; slug:string; name:string; category:string|null; chains:string[]; tvl_usd:number; change_7d:number|null; mcap_usd:number|null; listed_at:string|null; gecko_id:string|null; symbol:string|null; token_status:'pre-token'; age_days:number|null; implied_value_usd:number; signal:number; confidence:'high'|'medium'|'low'; watchlisted:boolean;
-  decomposition:{base:number; momentum:number; ageMult:number; multiple:number};
-  model:{base_multiple:number; growth_pct:number; growth_multiplier:number; maturity_multiplier:number; age_days:number|null}; farm_steps:string[];
+  rank: number;
+  slug: string;
+  name: string;
+  category: string | null;
+  chains: string[];
+  tvl_usd: number;
+  change_7d: number | null;
+  mcap_usd: number | null;
+  listed_at: string | null;
+  gecko_id: string | null;
+  symbol: string | null;
+  token_status: 'pre-token';
+  age_days: number | null;
+  implied_value_usd: number;
+  signal: number;
+  confidence: 'high' | 'medium' | 'low';
+  watchlisted: boolean;
+  decomposition: { base: number; momentum: number; ageMult: number; multiple: number };
+  model: { base_multiple: number; growth_pct: number; growth_multiplier: number; maturity_multiplier: number; age_days: number | null };
+  farm_steps: string[];
 }
 export interface RadarRow extends BoardRow {}
 export interface LiveRow { slug:string; name:string; category:string|null; chains:string[]; tvl_usd:number; mcap_usd:number|null; change_7d:number|null }
 export interface RadarData { as_of:string; source:string; floor_usd:number; model:ModelConstants; model_version:string; formulae:{base:string; momentum:string; ageMult:string; implied:string; signal:string}; watchlist:string[]; watchlist_size:number; board_size:number; early_size:number; live_size:number; rows:RadarRow[]; live:LiveRow[] }
 export class SnapshotError extends Error { constructor(message:string){ super(message); this.name='SnapshotError'; } }
 
-const DAY=86400000;
-const finite=(n:unknown,d:number):number=>typeof n==='number'&&Number.isFinite(n)?n:d;
-const round4=(n:number)=>Math.round(n*10000)/10000;
-const slugKey=(a:string,b:string)=>a<b?-1:a>b?1:0;
-export function ageDays(asOf:string, listed:string|null):number|null { if(listed===null)return null; const a=Date.parse(asOf+'T00:00:00Z'), b=Date.parse(listed+'T00:00:00Z'); return Number.isFinite(a)&&Number.isFinite(b)?Math.max(0,Math.floor((a-b)/DAY)):null; }
-export function isPreToken(p:SnapshotProtocol):boolean { return p.gecko_id===null&&p.symbol===null&&p.mcap_usd===null; }
-const rankable=(p:SnapshotProtocol)=>isPreToken(p)&&p.category!=='CEX';
-const multiple=(t:number,m=MODEL)=>t>=100000000?m.high_tvl_multiple:t>=10000000?m.mid_tvl_multiple:m.low_tvl_multiple;
-function metric(p:SnapshotProtocol,s:Snapshot,m=MODEL){
-  const age=ageDays(s.as_of,p.listed_at), a=age??m.unknown_age_days;
-  const ch=p.change_7d===null?0:Math.min(m.momentum_cap,Math.max(m.momentum_floor,p.change_7d));
-  const momentum=1+(ch/100)*m.momentum_weight, ageMult=m.age_floor+(Math.min(Math.max(a,0),m.age_days)/m.age_days)*m.age_range, mult=multiple(p.tvl_usd,m);
-  const base=p.tvl_usd*mult, implied=Math.max(1,Math.round(base*momentum*ageMult));
-  return {age,ch,momentum,ageMult,mult,base,implied};
+const DAY = 86400000;
+const finite = (n: unknown, d: number): number => typeof n === 'number' && Number.isFinite(n) ? n : d;
+const round4 = (n: number) => Math.round(n * 10000) / 10000;
+const slugKey = (a: string, b: string) => a < b ? -1 : a > b ? 1 : 0;
+export function ageDays(asOf: string, listed: string | null): number | null {
+  if (listed === null) return null;
+  const a = Date.parse(asOf + 'T00:00:00Z');
+  const b = Date.parse(listed + 'T00:00:00Z');
+  return Number.isFinite(a) && Number.isFinite(b) ? Math.max(0, Math.floor((a - b) / DAY)) : null;
 }
-function pct(n:number){return n<0.1?'under 0.1%':`${n.toFixed(2)}%`}
-function chain(p:SnapshotProtocol){return p.chains.length?p.chains[0]:'the primary chain'}
-function usd(n:number){return `$${Math.max(1,Math.round(n)).toLocaleString('en-US')}`}
+export function isPreToken(p: SnapshotProtocol): boolean {
+  return p.gecko_id === null && p.symbol === null && p.mcap_usd === null;
+}
+const rankable = (p: SnapshotProtocol) => isPreToken(p) && p.category !== 'CEX';
+const multiple = (t: number, m = MODEL) => t >= 100000000 ? m.high_tvl_multiple : t >= 10000000 ? m.mid_tvl_multiple : m.low_tvl_multiple;
+function metric(p: SnapshotProtocol, s: Snapshot, m = MODEL) {
+  const age = ageDays(s.as_of, p.listed_at);
+  const effectiveAge = age ?? m.unknown_age_days;
+  const change = p.change_7d === null
+    ? 0
+    : Math.min(m.momentum_cap, Math.max(m.momentum_floor, p.change_7d));
+  const momentum = 1 + (change / 100) * m.momentum_weight;
+  const ageMult = m.age_floor
+    + (Math.min(Math.max(effectiveAge, 0), m.age_days) / m.age_days) * m.age_range;
+  const mult = multiple(p.tvl_usd, m);
+  const base = p.tvl_usd * mult;
+  const implied = Math.max(1, Math.round(base * momentum * ageMult));
+  return { age, ch: change, momentum, ageMult, mult, base, implied };
+}
+
+function pct(n: number) {
+  return n < 0.1 ? 'under 0.1%' : `${n.toFixed(2)}%`;
+}
+
+function chain(p: SnapshotProtocol) {
+  return p.chains.length ? p.chains[0] : 'the primary chain';
+}
+
+function usd(n: number) {
+  return `$${Math.max(1, Math.round(n)).toLocaleString('en-US')}`;
+}
 function steps(p:SnapshotProtocol, m:{age:number|null;mult:number}):string[]{
   const c=(p.category||'other').toLowerCase(), ch=chain(p), name=p.name, capital=Math.max(50,Math.round(Math.min(500,p.tvl_usd*0.00001))), gas=Math.max(2,Math.round(capital*0.04)), bridge=Math.max(3,Math.round(capital*0.02)), hold=m.age===null?30:m.age<180?60:m.age<365?45:30;
   const common=[`Create a fresh wallet for ${name} and record its address before interacting on ${ch}. Cost: $${gas} gas. Time: 10 minutes.`];
@@ -47,11 +126,86 @@ function steps(p:SnapshotProtocol, m:{age:number|null;mult:number}):string[]{
   else plan=[`Fund ${usd(capital)} on ${name} on ${ch}, targeting ${pct(capital/p.tvl_usd*100)} of TVL and splitting the amount across two actions. Cost: $${gas} gas. Time: 20 minutes.`, `Complete the protocol's core swap, pool, vault, or testnet task with a small size. Cost: $${gas} gas plus $${bridge} fee if cross-chain. Time: 30 minutes.`, `Return on three separate days and perform a distinct qualifying action each visit. Cost: $${gas*3} gas. Time: 3 hours over 7 days.`, `Hold the position or retain task receipts for ${hold} days and save all transaction hashes. Cost: ${usd(capital)} working capital. Time: ${hold} days.`];
   return common.concat(plan).map(x=>x.length>600?x.slice(0,597)+'...':x);
 }
-function signal(p:SnapshotProtocol, rows:SnapshotProtocol[], mm:ReturnType<typeof metric>, s:Snapshot){const tvls=rows.map(x=>Math.log1p(Math.max(0,x.tvl_usd))), lo=Math.min(...tvls), hi=Math.max(...tvls), tvl=hi===lo?1:(Math.log1p(Math.max(0,p.tvl_usd))-lo)/(hi-lo), mom=(mm.ch-MODEL.momentum_floor)/(MODEL.momentum_cap-MODEL.momentum_floor), age=(Math.min(Math.max(mm.age??MODEL.unknown_age_days,0),MODEL.age_days)/MODEL.age_days); return Math.max(0,Math.min(100,Math.round((50*tvl+25*mom+25*age)*100)/100));}
-function row(p:SnapshotProtocol,s:Snapshot,all:SnapshotProtocol,watch:boolean):BoardRow{const x=metric(p,s), nulls=[p.change_7d,p.listed_at,p.category].filter(v=>v===null).length; return {rank:0,slug:p.slug,name:p.name,category:p.category,chains:p.chains,tvl_usd:p.tvl_usd,change_7d:p.change_7d,mcap_usd:p.mcap_usd,listed_at:p.listed_at,gecko_id:p.gecko_id,symbol:p.symbol,token_status:'pre-token',age_days:x.age,implied_value_usd:x.implied,signal:signal(p,all,x,s),confidence:nulls===0?'high':nulls===1?'medium':'low',watchlisted:watch,decomposition:{base:Math.round(x.base),momentum:round4(x.momentum),ageMult:round4(x.ageMult),multiple:x.mult},model:{base_multiple:x.mult,growth_pct:x.ch,growth_multiplier:round4(x.momentum),maturity_multiplier:round4(x.ageMult),age_days:x.age},farm_steps:steps(p,x)};}
-export function buildBoard(s:Snapshot):BoardRow[]{const by=new Map(s.protocols.map(p=>[p.slug,p])), chosen=new Map<string,SnapshotProtocol>(); for(const slug of s.watchlist){const p=by.get(slug);if(p&&rankable(p))chosen.set(slug,p);} const early=s.protocols.filter(p=>!chosen.has(p.slug)&&rankable(p)&&p.tvl_usd<s.floor_usd).sort((a,b)=>b.tvl_usd-a.tvl_usd||slugKey(a.slug,b.slug)); for(const p of early)chosen.set(p.slug,p); const all=[...chosen.values()]; return all.map(p=>row(p,s,all,s.watchlist.includes(p.slug))).sort((a,b)=>b.implied_value_usd-a.implied_value_usd||slugKey(a.slug,b.slug)).map((r,i)=>({...r,rank:i+1}));}
-export function liveRows(s:Snapshot):LiveRow[]{return s.protocols.filter(p=>!isPreToken(p)).sort((a,b)=>(b.mcap_usd??0)-(a.mcap_usd??0)||b.tvl_usd-a.tvl_usd||slugKey(a.slug,b.slug)).slice(0,LIVE_ROWS).map(p=>({slug:p.slug,name:p.name,category:p.category,chains:p.chains,tvl_usd:p.tvl_usd,mcap_usd:p.mcap_usd,change_7d:p.change_7d}));}
-export function buildRadar(s:Snapshot):{board:BoardRow[];radar:RadarData}{const board=buildBoard(s),live=liveRows(s);return {board,radar:{as_of:s.as_of,source:s.source,floor_usd:s.floor_usd,model:MODEL,model_version:MODEL_VERSION,formulae:{base:'base = tvl_usd × multiple; multiple is 0.25 / 0.35 / 0.5 by TVL band',momentum:'momentum = 1 + clamp(change_7d, -60, 150) / 100 × 0.4; null = 1',ageMult:'ageMult = 0.7 + min(age_days, 1095) / 1095 × 0.5; null = 365 days',implied:'implied = max(1, round(base × momentum × ageMult))',signal:'signal = 50 × normalized log TVL + 25 × momentum position + 25 × age position'},watchlist:s.watchlist,watchlist_size:s.watchlist.length,board_size:board.length,early_size:board.filter(r=>!r.watchlisted).length,live_size:live.length,rows:board,live}};}
+function signal(
+  p: SnapshotProtocol,
+  rows: SnapshotProtocol[],
+  mm: ReturnType<typeof metric>,
+  _s: Snapshot,
+) {
+  const tvls = rows.map((x) => Math.log1p(Math.max(0, x.tvl_usd)));
+  const lo = Math.min(...tvls);
+  const hi = Math.max(...tvls);
+  const tvl = hi === lo ? 1 : (Math.log1p(Math.max(0, p.tvl_usd)) - lo) / (hi - lo);
+  const mom = (mm.ch - MODEL.momentum_floor) / (MODEL.momentum_cap - MODEL.momentum_floor);
+  const age = Math.min(Math.max(mm.age ?? MODEL.unknown_age_days, 0), MODEL.age_days) / MODEL.age_days;
+  return Math.max(0, Math.min(100, Math.round((50 * tvl + 25 * mom + 25 * age) * 100) / 100));
+}
+
+function row(p: SnapshotProtocol, s: Snapshot, all: SnapshotProtocol, watch: boolean): BoardRow {
+  const x = metric(p, s);
+  const nulls = [p.change_7d, p.listed_at, p.category].filter((v) => v === null).length;
+  return {
+    rank: 0, slug: p.slug, name: p.name, category: p.category, chains: p.chains,
+    tvl_usd: p.tvl_usd, change_7d: p.change_7d, mcap_usd: p.mcap_usd,
+    listed_at: p.listed_at, gecko_id: p.gecko_id, symbol: p.symbol,
+    token_status: 'pre-token', age_days: x.age, implied_value_usd: x.implied,
+    signal: signal(p, all, x, s), confidence: nulls === 0 ? 'high' : nulls === 1 ? 'medium' : 'low',
+    watchlisted: watch,
+    decomposition: { base: Math.round(x.base), momentum: round4(x.momentum), ageMult: round4(x.ageMult), multiple: x.mult },
+    model: { base_multiple: x.mult, growth_pct: x.ch, growth_multiplier: round4(x.momentum), maturity_multiplier: round4(x.ageMult), age_days: x.age },
+    farm_steps: steps(p, x),
+  };
+}
+export function buildBoard(s: Snapshot): BoardRow[] {
+  const by = new Map(s.protocols.map((p) => [p.slug, p]));
+  const chosen = new Map<string, SnapshotProtocol>();
+  for (const slug of s.watchlist) {
+    const p = by.get(slug);
+    if (p && rankable(p)) chosen.set(slug, p);
+  }
+  const early = s.protocols
+    .filter((p) => !chosen.has(p.slug) && rankable(p) && p.tvl_usd < s.floor_usd)
+    .sort((a, b) => b.tvl_usd - a.tvl_usd || slugKey(a.slug, b.slug));
+  for (const p of early) chosen.set(p.slug, p);
+  const all = [...chosen.values()];
+  return all
+    .map((p) => row(p, s, all, s.watchlist.includes(p.slug)))
+    .sort((a, b) => b.implied_value_usd - a.implied_value_usd || slugKey(a.slug, b.slug))
+    .map((r, i) => ({ ...r, rank: i + 1 }));
+}
+
+export function liveRows(s: Snapshot): LiveRow[] {
+  return s.protocols
+    .filter((p) => !isPreToken(p))
+    .sort((a, b) => (b.mcap_usd ?? 0) - (a.mcap_usd ?? 0) || b.tvl_usd - a.tvl_usd || slugKey(a.slug, b.slug))
+    .slice(0, LIVE_ROWS)
+    .map((p) => ({
+      slug: p.slug, name: p.name, category: p.category, chains: p.chains,
+      tvl_usd: p.tvl_usd, mcap_usd: p.mcap_usd, change_7d: p.change_7d,
+    }));
+}
+
+export function buildRadar(s: Snapshot): { board: BoardRow[]; radar: RadarData } {
+  const board = buildBoard(s);
+  const live = liveRows(s);
+  return {
+    board,
+    radar: {
+      as_of: s.as_of, source: s.source, floor_usd: s.floor_usd,
+      model: MODEL, model_version: MODEL_VERSION,
+      formulae: {
+        base: 'base = tvl_usd × multiple; multiple is 0.25 / 0.35 / 0.5 by TVL band',
+        momentum: 'momentum = 1 + clamp(change_7d, -60, 150) / 100 × 0.4; null = 1',
+        ageMult: 'ageMult = 0.7 + min(age_days, 1095) / 1095 × 0.5; null = 365 days',
+        implied: 'implied = max(1, round(base × momentum × ageMult))',
+        signal: 'signal = 50 × normalized log TVL + 25 × momentum position + 25 × age position',
+      },
+      watchlist: s.watchlist, watchlist_size: s.watchlist.length,
+      board_size: board.length, early_size: board.filter((r) => !r.watchlisted).length,
+      live_size: live.length, rows: board, live,
+    },
+  };
+}
 export function parseSnapshot(text:string):Snapshot{let raw:unknown;try{raw=JSON.parse(text);}catch{throw new SnapshotError('snapshot.json is not JSON');} if(!raw||typeof raw!=='object'||Array.isArray(raw))throw new SnapshotError('snapshot.json is not a JSON object'); const o=raw as Record<string,unknown>; if(typeof o.as_of!=='string'||!/^[0-9]{4}-[0-9]{2}-[0-9]{2}$/.test(o.as_of))throw new SnapshotError('snapshot.json has no as_of date'); if(typeof o.source!=='string'||typeof o.floor_usd!=='number'||!Number.isFinite(o.floor_usd)||o.floor_usd<=0||!Array.isArray(o.protocols)||!Array.isArray(o.watchlist)||o.watchlist.some(x=>typeof x!=='string'))throw new SnapshotError('snapshot.json has invalid metadata'); const protocols=o.protocols.map((v,i)=>{if(!v||typeof v!=='object'||Array.isArray(v))throw new SnapshotError(`snapshot protocol ${i} is invalid`);const p=v as Record<string,unknown>;if(typeof p.slug!=='string'||typeof p.name!=='string'||typeof p.tvl_usd!=='number'||!Number.isFinite(p.tvl_usd))throw new SnapshotError(`snapshot protocol ${i} lacks slug, name, or TVL`);return {slug:p.slug,name:p.name,category:typeof p.category==='string'?p.category:null,chains:Array.isArray(p.chains)?p.chains.filter((x):x is string=>typeof x==='string'):[],tvl_usd:p.tvl_usd,change_7d:typeof p.change_7d==='number'&&Number.isFinite(p.change_7d)?p.change_7d:null,mcap_usd:typeof p.mcap_usd==='number'&&Number.isFinite(p.mcap_usd)?p.mcap_usd:null,listed_at:typeof p.listed_at==='string'?p.listed_at:null,gecko_id:typeof p.gecko_id==='string'?p.gecko_id:null,symbol:typeof p.symbol==='string'?p.symbol:null};}); return {as_of:o.as_of,source:o.source,floor_usd:o.floor_usd as number,protocols,watchlist:o.watchlist as string[]};}
 export function boardIssue(board:BoardRow[],s:Snapshot):string|null{if(board.length<100||board.length>4000)return `board has ${board.length} rows; expected 100 to 4000`;const valid=/^[a-z0-9][a-z0-9._()+-]{0,127}$/;const seen=new Set<string>();for(const r of board){if(!valid.test(r.slug))return `${r.slug} is not a valid slug`;if(seen.has(r.slug))return `duplicate slug ${r.slug}`;seen.add(r.slug);}const ranks=board.map(r=>r.rank).sort((a,b)=>a-b);for(let i=0;i<ranks.length;i++)if(ranks[i]!==i+1)return `rank ${i+1} is ${ranks[i]}`;if(new Set(board.map(r=>r.implied_value_usd)).size<2)return 'board needs at least two distinct implied values';for(let i=1;i<board.length;i++)if(board[i].implied_value_usd>board[i-1].implied_value_usd)return `row ${i+1} increases implied value`;for(const r of board){if(!Number.isSafeInteger(r.implied_value_usd)||r.implied_value_usd<=0)return `${r.slug} has invalid implied value`;if(!Array.isArray(r.farm_steps)||r.farm_steps.length<3||r.farm_steps.length>12)return `${r.slug} has invalid farm step count`;for(const x of r.farm_steps)if(typeof x!=='string'||x.length<20||x.length>600)return `${r.slug} has an invalid farm step`;if(!isPreToken(r))return `${r.slug} is live-token and cannot be ranked`;}const missing=s.watchlist.filter(x=>!seen.has(x));return missing.length?`missing watchlist slugs: ${missing.slice(0,5).join(', ')}`:null;}
 export function dataScript(radar:RadarData):string{return `window.DRIFTLINE = ${JSON.stringify(radar)};\n`;}

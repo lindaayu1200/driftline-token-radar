@@ -3,21 +3,84 @@
   var D = window.DRIFTLINE, app = document.getElementById('board');
   if (!D) return;
   var state = { q: '', category: 'all', chain: 'all', watch: false, confidence: 'all', sort: 'rank', dir: 1, detail: null, tab: 'board' };
-  function node(tag, attrs) { var n = document.createElement(tag); attrs = attrs || {}; Object.keys(attrs).forEach(function (k) { if (k === 'text') n.textContent = attrs[k]; else if (k === 'html') n.innerHTML = attrs[k]; else if (k.slice(0, 2) === 'on') n.addEventListener(k.slice(2), attrs[k]); else if (attrs[k] !== null && attrs[k] !== undefined) n.setAttribute(k, attrs[k]); }); for (var i = 2; i < arguments.length; i++) { var c = arguments[i]; var flat = Array.isArray(c) ? c : [c]; for (var j = 0; j < flat.length; j++) { var v = flat[j]; if (v === null || v === undefined || v === false) continue; n.appendChild(v instanceof Node ? v : document.createTextNode(String(v))); } } return n; }
-  function usd(n) { if (n === null || n === undefined) return '—'; var a = Math.abs(n); return '$' + (a >= 1e9 ? (n / 1e9).toFixed(2) + 'B' : a >= 1e6 ? (n / 1e6).toFixed(1) + 'M' : a >= 1e3 ? Math.round(n / 1e3) + 'K' : Math.round(n).toLocaleString()); }
+  // Build ordinary DOM nodes while accepting text, numbers, nodes, or child arrays.
+  function node(tag, attrs) {
+    var n = document.createElement(tag);
+    attrs = attrs || {};
+    Object.keys(attrs).forEach(function (key) {
+      if (key === 'text') n.textContent = attrs[key];
+      else if (key === 'html') n.innerHTML = attrs[key];
+      else if (key.slice(0, 2) === 'on') n.addEventListener(key.slice(2), attrs[key]);
+      else if (attrs[key] !== null && attrs[key] !== undefined) n.setAttribute(key, attrs[key]);
+    });
+    for (var i = 2; i < arguments.length; i++) {
+      var children = Array.isArray(arguments[i]) ? arguments[i] : [arguments[i]];
+      children.forEach(function (child) {
+        if (child === null || child === undefined || child === false) return;
+        n.appendChild(child instanceof Node ? child : document.createTextNode(String(child)));
+      });
+    }
+    return n;
+  }
+  function usd(n) {
+    if (n === null || n === undefined) return '—';
+    var a = Math.abs(n);
+    return '$' + (a >= 1e9 ? (n / 1e9).toFixed(2) + 'B' : a >= 1e6 ? (n / 1e6).toFixed(1) + 'M' : a >= 1e3 ? Math.round(n / 1e3) + 'K' : Math.round(n).toLocaleString());
+  }
   function pct(n) { return n === null || n === undefined ? '—' : (n >= 0 ? '+' : '') + n.toFixed(2) + '%'; }
   function age(n) { return n === null || n === undefined ? 'unknown' : n >= 365 ? (n / 365).toFixed(1) + 'y' : Math.round(n) + 'd'; }
   var categories = D.rows.map(function (r) { return r.category || 'Other'; }).filter(function (v, i, a) { return a.indexOf(v) === i; }).sort();
   var chains = D.rows.reduce(function (a, r) { return a.concat(r.chains || []); }, []).filter(function (v, i, a) { return a.indexOf(v) === i; }).sort();
-  function filtered() { var q = state.q.toLowerCase(); return D.rows.filter(function (r) { return (state.category === 'all' || r.category === state.category) && (state.chain === 'all' || (r.chains || []).indexOf(state.chain) >= 0) && (!state.watch || r.watchlisted) && (state.confidence === 'all' || r.confidence === state.confidence) && (!q || [r.name, r.slug, r.category, (r.chains || []).join(' ')].join(' ').toLowerCase().indexOf(q) >= 0); }).sort(function (a, b) { var k = state.sort, av = k === 'name' ? a.name.toLowerCase() : k === 'tvl' ? a.tvl_usd : k === 'momentum' ? (a.change_7d == null ? -Infinity : a.change_7d) : k === 'age' ? (a.age_days == null ? Infinity : a.age_days) : k === 'signal' ? a.signal : k === 'value' ? a.implied_value_usd : a.rank, bv = k === 'name' ? b.name.toLowerCase() : k === 'tvl' ? b.tvl_usd : k === 'momentum' ? (b.change_7d == null ? -Infinity : b.change_7d) : k === 'age' ? (b.age_days == null ? Infinity : b.age_days) : k === 'signal' ? b.signal : k === 'value' ? b.implied_value_usd : b.rank; return av < bv ? -state.dir : av > bv ? state.dir : a.slug.localeCompare(b.slug); }); }
+  function filtered() {
+    var q = state.q.toLowerCase();
+    return D.rows.filter(function (r) {
+      var searchable = [r.name, r.slug, r.category, (r.chains || []).join(' ')].join(' ').toLowerCase();
+      return (state.category === 'all' || r.category === state.category) &&
+        (state.chain === 'all' || (r.chains || []).indexOf(state.chain) >= 0) &&
+        (!state.watch || r.watchlisted) &&
+        (state.confidence === 'all' || r.confidence === state.confidence) &&
+        (!q || searchable.indexOf(q) >= 0);
+    }).sort(function (a, b) {
+      var key = state.sort;
+      var av = sortValue(a, key), bv = sortValue(b, key);
+      return av < bv ? -state.dir : av > bv ? state.dir : a.slug.localeCompare(b.slug);
+    });
+  }
+
+  function sortValue(row, key) {
+    if (key === 'name') return row.name.toLowerCase();
+    if (key === 'tvl') return row.tvl_usd;
+    if (key === 'momentum') return row.change_7d == null ? -Infinity : row.change_7d;
+    if (key === 'age') return row.age_days == null ? Infinity : row.age_days;
+    if (key === 'signal') return row.signal;
+    if (key === 'value') return row.implied_value_usd;
+    return row.rank;
+  }
   function masthead() {
     var tvl = D.rows.filter(function (r) { return r.watchlisted; }).reduce(function (a, r) { return a + r.tvl_usd; }, 0);
     var stats = node('div', { class: 'stats' });
-    [['Total TVL watched', usd(tvl)], ['Protocols ranked', D.board_size], ['Watchlist covered', D.watchlist_size + '/' + D.watchlist_size], ['Floor', usd(D.floor_usd)], ['As of', D.as_of]].forEach(function (v) { stats.appendChild(node('div', { class: 'stat' }, node('b', { class: 'num', text: String(v[1]) }), node('span', { text: v[0] }))); });
+    var values = [['Total TVL watched', usd(tvl)], ['Protocols ranked', D.board_size], ['Watchlist covered', D.watchlist_size + '/' + D.watchlist_size], ['Floor', usd(D.floor_usd)], ['As of', D.as_of]];
+    values.forEach(function (value) {
+      stats.appendChild(node('div', { class: 'stat' },
+        node('b', { class: 'num', text: String(value[1]) }),
+        node('span', { text: value[0] })));
+    });
     return node('header', { class: 'mast' }, node('div', { class: 'eyebrow', text: 'NAUTICAL SOUNDINGS / ' + D.model_version }), node('h1', { text: 'Driftline' }), node('p', { class: 'subtitle', text: "where a protocol's token is not yet issued" }), stats);
   }
-  function formula() { return node('section', { class: 'formula' }, node('strong', { text: 'How the number is made' }), node('code', { text: D.formulae.base + ' · ' + D.formulae.momentum + ' · ' + D.formulae.ageMult }), node('span', { class: 'muted', text: 'model ' + D.model_version })); }
-  function svgNode(tag, attrs) { var n = document.createElementNS('http://www.w3.org/2000/svg', tag); attrs = attrs || {}; Object.keys(attrs).forEach(function (k) { if (attrs[k] !== null && attrs[k] !== undefined) n.setAttribute(k, attrs[k]); }); return n; }
+  function formula() {
+    return node('section', { class: 'formula' },
+      node('strong', { text: 'How the number is made' }),
+      node('code', { text: D.formulae.base + ' · ' + D.formulae.momentum + ' · ' + D.formulae.ageMult }),
+      node('span', { class: 'muted', text: 'model ' + D.model_version }));
+  }
+
+  function svgNode(tag, attrs) {
+    var n = document.createElementNS('http://www.w3.org/2000/svg', tag);
+    Object.keys(attrs || {}).forEach(function (key) {
+      if (attrs[key] !== null && attrs[key] !== undefined) n.setAttribute(key, attrs[key]);
+    });
+    return n;
+  }
   function chart() { var w = 900, h = 280, p = { l: 52, r: 15, t: 12, b: 34 }, rs = D.rows, aa = rs.map(function (r) { return Math.max(1, r.age_days == null ? 365 : r.age_days); }), vv = rs.map(function (r) { return Math.max(1, r.tvl_usd); }), amin = Math.min.apply(0, aa), amax = Math.max.apply(0, aa), vmin = Math.min.apply(0, vv), vmax = Math.max.apply(0, vv), lx = function (n) { return p.l + (Math.log(n) - Math.log(amin)) / (Math.log(amax) - Math.log(amin) || 1) * (w - p.l - p.r); }, ly = function (n) { return h - p.b - (Math.log(n) - Math.log(vmin)) / (Math.log(vmax) - Math.log(vmin) || 1) * (h - p.t - p.b); }, svg = svgNode('svg', { class: 'chart', viewBox: '0 0 ' + w + ' ' + h, role: 'img', 'aria-label': 'Soundings chart' }); [0, 1, 2, 3].forEach(function (i) { var y = p.t + i * (h - p.t - p.b) / 3; svg.appendChild(svgNode('line', { class: 'grid', x1: p.l, y1: y, x2: w - p.r, y2: y })); }); svg.appendChild(svgNode('line', { class: 'axis', x1: p.l, y1: h - p.b, x2: w - p.r, y2: h - p.b })); var label = svgNode('text', { x: p.l, y: h - 8 }); label.textContent = 'age in days →'; svg.appendChild(label); rs.forEach(function (r) { var c = svgNode('circle', { class: 'point' + (r.watchlisted ? ' watch' : ''), cx: lx(Math.max(1, r.age_days == null ? 365 : r.age_days)), cy: ly(Math.max(1, r.tvl_usd)), r: Math.max(3, Math.min(11, Math.sqrt(r.implied_value_usd) / 1800)), tabindex: 0 }); c.appendChild(svgNode('title')); c.firstChild.textContent = r.name + ' · ' + usd(r.implied_value_usd); c.onclick = function () { open(r.slug); }; svg.appendChild(c); }); return node('section', { class: 'chartbox' }, node('div', { class: 'charthead' }, node('h2', { text: 'The soundings chart' }), node('span', { class: 'muted', text: 'log age × log TVL · ringed = watchlist' })), svg); }
   function controls() { function select(label, values, current, set) { var s = node('select', { 'aria-label': label }, node('option', { value: 'all', text: 'All ' + label.toLowerCase() })); values.forEach(function (v) { s.appendChild(node('option', { value: v, text: v })); }); s.value = current; s.onchange = function () { set(s.value); render(); }; return node('div', { class: 'field' }, node('label', { text: label }), s); } var q = node('input', { type: 'search', placeholder: 'Search name, category or chain', value: state.q }); q.oninput = function () { state.q = q.value; render(); }; return node('div', { class: 'controls' }, node('div', { class: 'field' }, node('label', { text: 'Search' }), q), select('Category', categories, state.category, function (v) { state.category = v; }), select('Chain', chains, state.chain, function (v) { state.chain = v; }), select('Confidence', ['high', 'medium', 'low'], state.confidence, function (v) { state.confidence = v; }), node('label', { class: 'toggle' }, node('input', { type: 'checkbox', checked: state.watch ? 'checked' : null, onchange: function () { state.watch = this.checked; render(); } }), ' Watchlist only'), node('span', { class: 'count', text: filtered().length + ' rows shown' })); }
   function badges(r) { var c = r.chains || [], b = c.slice(0, 3).map(function (v) { return node('span', { class: 'badge', text: v }); }); if (c.length > 3) b.push(node('span', { class: 'badge', text: '+' + (c.length - 3) })); return node('div', { class: 'badges' }, b); }
